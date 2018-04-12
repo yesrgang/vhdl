@@ -1,0 +1,10 @@
+compile with XILINX ISE webpack
+
+Spatan 6, XC6SLX16, FTG256
+
+to set unused pins to High Z (may help with Blue Screen issues):
+- right click on generate programming file
+- click process properties, configuration options
+- unused IOB pins 'float'
+
+

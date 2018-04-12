@@ -1,11 +1,11 @@
-library IEEE;
-use IEEE.std_logic_1164.all;
-use IEEE.std_logic_arith.all;
-use IEEE.std_logic_misc.all;
-use IEEE.std_logic_unsigned.all;
-use work.FRONTPANEL.all;
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_arith.all;
+use ieee.std_logic_misc.all;
+use ieee.std_logic_unsigned.all;
+use work.frontpanel.all;
 
-entity sequencer is
+entity digital_sequencer is
 	port (
         -- opal kelly --
 		hi_in     : in    std_logic_vector(7 downto 0);
@@ -16,12 +16,14 @@ entity sequencer is
         led    : out   std_logic_vector(7 downto 0);
 		-- 100 MHz from PLL --
 		clk_100 : in std_logic;	
+        -- external trigger --
+        trigger : in std_logic;
         -- sequence out --
         logic_out : inout std_logic_vector(63 downto 0) := (others => '0')
 	);
-end sequencer;
+end digital_sequencer;
 
-architecture arch of sequencer is
+architecture arch of digital_sequencer is
     -- opal kelly --
     signal ti_clk   : std_logic; -- 48MHz clk. USB data is sync'd to this.
 	signal ok1      : std_logic_vector(30 downto 0);
@@ -38,6 +40,7 @@ architecture arch of sequencer is
     signal ep07wire : std_logic_vector(15 downto 0);
     signal ep08wire : std_logic_vector(15 downto 0);
 	signal ep20wire : std_logic_vector(15 downto 0);
+	signal ep60trig : std_logic_vector(15 downto 0);
     signal ep80pipe  : std_logic_vector(15 downto 0); 
     signal ep80write : std_logic; -- hi during communication
    
@@ -47,6 +50,7 @@ architecture arch of sequencer is
     signal ticks_til_update : integer := 10;
     signal sequence_count   : integer range 0 to 1000 := 0;
     signal sequence_logic   : std_logic_vector(63 downto 0) := (others => '0') ;
+    signal sequence_finished : std_logic; -- goes high when sequence is done (ram reads 0)
 
     signal clk     : std_logic;
     signal slo_clk : std_logic;
@@ -81,21 +85,23 @@ clk <= ti_clk when (state = load) else
 ram_clk <= clk;
 --led(7) <= slo_clk;
 
-    --slo_clk
-    process (clk_100) is --it blinks twice a second. 
-        variable counter : integer := 0;
-    begin
-        if rising_edge(clk_100) then
-            counter := counter + 1;
-            if counter < 25000000 then
-                slo_clk <= '0';
-            elsif counter < 50000000 then
-                slo_clk <= '1';
-            elsif counter >= 50000000 then
-                counter := 0;
-            end if;
-        end if;
-    end process;
+ep60trig <= ("000000000000000" & sequence_finished);
+
+--    --slo_clk
+--    process (clk_100) is --it blinks twice a second. 
+--        variable counter : integer := 0;
+--    begin
+--        if rising_edge(clk_100) then
+--            counter := counter + 1;
+--            if counter < 25000000 then
+--                slo_clk <= '0';
+--            elsif counter < 50000000 then
+--                slo_clk <= '1';
+--            elsif counter >= 50000000 then
+--                counter := 0;
+--            end if;
+--        end if;
+--    end process;
     
     process (clk_100) is 
     begin 
@@ -136,33 +142,54 @@ ram_clk <= clk;
     end process;
 
     -- control sequence_logic, 
-    process(clk, state, ram_data_o) is
+    process(clk, state, ram_data_o, sequence_finished, trigger) is
         variable read_logic : std_logic_vector(95 downto 0) := conv_std_logic_vector(0, 96); -- holds data read from ram.
+        variable armed : std_logic := '0';
+        variable waiting_trigger : std_logic := '0';
+        variable read_ticks : integer;
     begin
         if falling_edge(clk) then
-            led(7 downto 0) <= not sequence_logic(63 downto 56);
+            -- led(7 downto 0) <= not sequence_logic(63 downto 56);
+            --led <= not (sequence_finished & "000000" & trigger);
+--            led <= not conv_std_logic_vector(ticks_til_update, 8);
+            led <= not (trigger & "00000" & waiting_trigger & armed);
             case(state) is
+                when load => -- get ready to run, output defaults
+                    sequence_finished <= '0';
                 when idle => -- get ready to run, output defaults
                     ticks_til_update <= 100; 
-                    sequence_logic <= conv_std_logic_vector(0, 64);
                     sequence_count <= 0;
+                    sequence_finished <= '0';
                 when run => 
                     if ticks_til_update < 0 then -- something changes, we are adding 10 ns at each switch
-                        sequence_logic <= read_logic(63 downto 0);
-                        if conv_integer(read_logic(95 downto 64)) = 0 then -- the sequence is done. start over
-                            sequence_count <= 0;
-                            ticks_til_update <= 10;
+                        read_ticks := conv_integer(read_logic(95 downto 64));
+                        if read_ticks = 0 then -- the sequence is done. start over
+                            sequence_finished <= '1';
+                        elsif read_ticks = 2**31 - 1 then
+                            waiting_trigger := '1';
+                            sequence_logic <= read_logic(63 downto 0);
+                            ticks_til_update <= 40;
+                            sequence_count <= sequence_count + 1;
                         else -- update outputs and ticks til next update
-                            ticks_til_update <= conv_integer(read_logic(95 downto 64)-2);
-                            sequence_count <= sequence_count+1;
+                            sequence_logic <= read_logic(63 downto 0);
+                            ticks_til_update <= read_ticks - 2;
+                            sequence_count <= sequence_count + 1;
+--                            sequence_finished <= '0';
+                        end if;
+                    elsif waiting_trigger = '1' then
+                        if (trigger = '1') and (armed = '1') then
+                            ticks_til_update <= 40;
+                            armed := '0';
+                            waiting_trigger := '0';
+                        elsif trigger = '0' then
+                            armed := '1';
                         end if;
                     else  -- tick
                         ticks_til_update <= ticks_til_update - 1;
                         if ticks_til_update < 6 then -- need to read from ram
-                            read_logic((ticks_til_update+1)*16-1 downto (ticks_til_update)*16) := ram_data_o;
+                            read_logic((ticks_til_update + 1) * 16 - 1 downto (ticks_til_update) * 16) := ram_data_o;
                         end if;
-                        sequence_logic <= sequence_logic;
-                        sequence_count <= sequence_count;
+--                       sequence_finished <= '0';
                     end if;
                 when others => null;
             end case;
@@ -398,19 +425,19 @@ port map(
 );
 
 -- Instantiate the okHost and connect endpoints
-okHI : okHost port map (hi_in=>hi_in, hi_out=>hi_out, hi_inout=>hi_inout, ti_clk=>ti_clk, ok1=>ok1, ok2=>ok2);
-okWO : okWireOR  generic map (N=>2) port map (ok2=>ok2, ok2s=>ok2s);
-ep00 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"00", ep_dataout=>ep00wire);
-ep01 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"01", ep_dataout=>ep01wire);
-ep02 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"02", ep_dataout=>ep02wire);
-ep03 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"03", ep_dataout=>ep03wire);
-ep04 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"04", ep_dataout=>ep04wire);
-ep05 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"05", ep_dataout=>ep05wire);
-ep06 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"06", ep_dataout=>ep06wire);
-ep07 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"07", ep_dataout=>ep07wire);
-ep08 : okWireIn  port map (ok1=>ok1,                                ep_addr=>x"08", ep_dataout=>ep08wire);
-ep20 : okWireOut port map (ok1=>ok1, ok2=>ok2s(1*17-1 downto 0*17), ep_addr=>x"20", ep_datain=>ep20wire);
-ep80 : okPipeIn  port map (ok1=>ok1, ok2=>ok2s(2*17-1 downto 1*17), ep_addr=>x"80", ep_dataout=>ep80pipe, 
-                           ep_write=>ep80write);
+okHI : okHost       port map (hi_in=>hi_in, hi_out=>hi_out, hi_inout=>hi_inout, ti_clk=>ti_clk, ok1=>ok1, ok2=>ok2);
+okWO : okWireOR     generic map (N=>2) port map (ok2=>ok2, ok2s=>ok2s);
+ep00 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"00", ep_dataout=>ep00wire);
+ep01 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"01", ep_dataout=>ep01wire);
+ep02 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"02", ep_dataout=>ep02wire);
+ep03 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"03", ep_dataout=>ep03wire);
+ep04 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"04", ep_dataout=>ep04wire);
+ep05 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"05", ep_dataout=>ep05wire);
+ep06 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"06", ep_dataout=>ep06wire);
+ep07 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"07", ep_dataout=>ep07wire);
+ep08 : okWireIn     port map (ok1=>ok1,                                ep_addr=>x"08", ep_dataout=>ep08wire);
+--ep20 : okWireOut    port map (ok1=>ok1, ok2=>ok2s(1*17-1 downto 0*17), ep_addr=>x"20", ep_datain=>ep20wire);
+ep60 : okTriggerOut port map (ok1=>ok1, ok2=>ok2s(1*17-1 downto 0*17), ep_addr=>x"60", ep_clk=>clk, ep_trigger=>ep60trig);
+ep80 : okPipeIn     port map (ok1=>ok1, ok2=>ok2s(2*17-1 downto 1*17), ep_addr=>x"80", ep_dataout=>ep80pipe, ep_write=>ep80write);
 
 end arch;

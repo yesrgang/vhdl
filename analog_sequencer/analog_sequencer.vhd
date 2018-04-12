@@ -1,19 +1,11 @@
-library IEEE;
---use IEEE.std_logic_1164.all;
---use IEEE.std_logic_arith.all;
---use IEEE.std_logic_misc.all;
---use IEEE.std_logic_unsigned.all;
---use ieee.numeric_std.to_integer;
---use ieee.numeric_std.to_signed;
-use IEEE.std_logic_1164.all;
---use IEEE.std_logic_arith.conv_std_logic_vector;
---use IEEE.std_logic_arith.conv_integer;
+library ieee;
+use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 
-use work.FRONTPANEL.all;
+use work.frontpanel.all;
 
-entity dac is
+entity analog_sequencer is
 	port (
         -- opal kelly --
 		hi_in     : in    std_logic_vector(7 downto 0);
@@ -41,11 +33,11 @@ entity dac is
         end loop;
         return n;
     end function log2;
-end dac;
+end analog_sequencer;
 
 
 
-architecture arch of dac is
+architecture arch of analog_sequencer is
     -- opal kelly --
     signal ti_clk   : std_logic; -- 48MHz clk. USB data is sync'd to this.
 	signal ok1      : std_logic_vector(30 downto 0);
@@ -183,7 +175,7 @@ state <= idle when ep00wire(1 downto 0) = "00" else
     begin
         if falling_edge(clk) then
             case (state) is
-                when run =>
+                when run | ready=>
                     if latch_count = 0 then 
                         dac_cs(dac_count) <= '0';
                         latch_count <= latch_count + 1;
@@ -205,31 +197,6 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                         ldac <= (others => '0');
                         latch_count <= 0;
                     end if;
---
---                    case latch_count is
---                        when 0 => -- select chip
---                            dac_cs(dac_count) <= '0';
---                            latch_count <= latch_count + 1;
---                            ldac(dac_count) <= '1';
---                        when 1 => -- deselect chip
---                            dac_cs(dac_count) <= '1';
---                            ldac(dac_count) <= '0';
---                            if dac_count < 7 then
---                                dac_count <= dac_count + 1;
---                                latch_count <= 0;
---                            else 
---                                latch_count <= latch_count + 1;
---                                dac_count <= 0;
---                            end if;
---                        when 2 => 
---                            ldac <= (others => '1');
---                            latch_count <= latch_count + 1;
---                        when 3 =>
---                            ldac <= (others => '0');
---                            latch_count <= 0;
---                        when others => 
---                            latch_count <= 0;
---                    end case;
                 when others =>
                     dac_cs <= (others => '1');
                     ldac <= (others => '0');
@@ -244,69 +211,45 @@ state <= idle when ep00wire(1 downto 0) = "00" else
     begin
         if falling_edge(clk) then
             led <= not dac_bus(7 downto 0); --std_logic_vector(to_unsigned(dac, 8));
+
+--            if (state = run) and (ep09wire(dac_count) = '0') then
+--                dac_bus <= std_logic_vector(to_unsigned(
+--                           next_voltage(dac_count) - to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(ticks_til_update(dac_count), 48), shift_bits(dac_count)))
+--                           , 16));
+--            elsif (state = ready) and (ep09wire(dac_count) = '0') then
+--                dac_bus <= std_logic_vector(to_unsigned(
+--                           next_voltage(dac_count) - to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(ticks_til_update(dac_count), 48), shift_bits(dac_count)))
+--                           , 16));
+--            else 
+--                dac_bus <= manual_voltages(dac_count);
+--            end if;
             if (state = run) and (ep09wire(dac_count) = '0') then
                 dac_bus <= std_logic_vector(to_unsigned(
                            next_voltage(dac_count) - to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(ticks_til_update(dac_count), 48), shift_bits(dac_count)))
                            , 16));
+            elsif (ep09wire(dac_count) = '0') then
+                dac_bus <= std_logic_vector(to_unsigned(next_voltage(dac_count), 16));
             else 
                 dac_bus <= manual_voltages(dac_count);
             end if;
         end if;
     end process;
 
---    process(state, clk, ticks_til_update, duration, ram_data_o) is
---    begin
---        if falling_edge(clk) then
---            if ticks_til_update(dac_count) <= 0 then
---                sequence_count <= sequence_count + 1;
---                ticks_til_update(dac_count) <= to_integer(unsigned(ram_data_o(47 downto 16)));
---                duration(dac_count) <= to_integer(unsigned(ram_data_o(47 downto 16)));
---                shift_bits(dac_count) <= log2(to_integer(unsigned(ram_data_o(47 downto 16))))-1;
---                step_size(dac_count) <= to_integer(signed(ram_data_o(15 downto 0)));
---            elsif ticks_til_update(dac_count) = duration(dac_count) then
---                next_voltage(dac_count) <= next_voltage(dac_count) + to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(duration(dac_count), 48), shift_bits(dac_count)));
---            end if;
---
---            if latch_count = 3 then
---                ticks_til_update(0) <= ticks_til_update(0) - 1;
---                ticks_til_update(1) <= ticks_til_update(1) - 1;
---                ticks_til_update(2) <= ticks_til_update(2) - 1;
---                ticks_til_update(3) <= ticks_til_update(3) - 1;
---                ticks_til_update(4) <= ticks_til_update(4) - 1;
---                ticks_til_update(5) <= ticks_til_update(5) - 1;
---                ticks_til_update(6) <= ticks_til_update(6) - 1;
---                ticks_til_update(7) <= ticks_til_update(7) - 1;
---            end if;
---        end if;
---    end process;
-
-    
-
     -- control dac_bus
     process(state, clk) is
---        variable step_size       : int_array := (others => 0);
---        variable next_voltage    : int_array := (others => 2**15);
---        variable duration        : int_array := (others => 1);
---        variable shift_bits      : nat_array := (others => 0);
+        variable new_sequence : std_logic := '0';
     begin
         if falling_edge(clk) then
             case (state) is 
                 when run =>
+                    if new_sequence = '1' then
+                        next_voltage <= (others => 2**15);
+                        new_sequence := '0';
+                    end if;
                     case latch_count is
                         when 0 =>
---                            if ep09wire(dac_count) = '0' then
---                                dac_bus <= std_logic_vector(to_unsigned(
---                                           next_voltage(dac_count) - to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(ticks_til_update(dac_count), 48), shift_bits(dac_count)))
---                                           , 16));
---                            else 
---                                dac_bus <= manual_voltages(dac_count);
---                            end if;
-
                             if ticks_til_update(dac_count) <= 0 then
                                 if to_integer(unsigned(ram_data_o(47 downto 16))) = 0 then -- done with the current sequence
---                                    ticks_til_update <= (others => 3);
---                                    sequence_count <= 0;
---                                    next_voltage <= (others =>2**15);
                                     null;
                                 else -- not done with sequence, advance 
                                     sequence_count <= sequence_count + 1;
@@ -317,7 +260,7 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                                 end if;
                             end if;
                         when 1 => 
-                            if ticks_til_update(dac_count) = duration(dac_count) then -- if we just read new values
+                            if ticks_til_update(dac_count) = duration(dac_count) then -- we just read new values
                                 next_voltage(dac_count) <= next_voltage(dac_count) + to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(duration(dac_count), 48), shift_bits(dac_count)));
                             end if;
                         when 3 =>
@@ -332,9 +275,12 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                         when others => -- other latch_count 
                             null;
                     end case;
+                when ready => 
+                    null;
                 when others => -- other states
+                    new_sequence := '1';
                     shift_bits <= (others => 0);
-                    next_voltage <= (others => 2**15);
+--                    next_voltage <= (others => 2**15);
                     step_size <= (others => 0);
                     ticks_til_update <= (others => 5);
                     sequence_count <= 0;
@@ -369,7 +315,7 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                     if ep80write = '1' then
                         ram_addr <= ram_addr + 1;
                     end if;
-                when run =>
+                when run | ready =>
                     ram_addr <= 3*sequence_count;
                 when others => 
                     ram_addr <= 0;

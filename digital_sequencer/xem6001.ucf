@@ -164,7 +164,7 @@ NET "logic_out<62>"  LOC="R15" | IOSTANDARD="LVCMOS33";
 NET "logic_out<63>"  LOC="R16" | IOSTANDARD="LVCMOS33";
 #NET "xbus<32>"  LOC="R14" | IOSTANDARD="LVCMOS33";
 #NET "xbus<33>"  LOC="T15" | IOSTANDARD="LVCMOS33";
-#NET "xbus<34>"  LOC="T13" | IOSTANDARD="LVCMOS33";
+NET "trigger"  LOC="T13" | IOSTANDARD="LVCMOS33";
 #NET "xbus<35>"  LOC="T14" | IOSTANDARD="LVCMOS33";
 
 ############################################################################
