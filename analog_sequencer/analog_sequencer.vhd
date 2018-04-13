@@ -237,15 +237,11 @@ state <= idle when ep00wire(1 downto 0) = "00" else
 
     -- control dac_bus
     process(state, clk) is
-        variable new_sequence : std_logic := '0';
+        variable new_sequence : std_logic_vector(7 downto 0) := (others => '0');
     begin
         if falling_edge(clk) then
             case (state) is 
                 when run =>
-                    if new_sequence = '1' then
-                        next_voltage <= (others => 2**15);
-                        new_sequence := '0';
-                    end if;
                     case latch_count is
                         when 0 =>
                             if ticks_til_update(dac_count) <= 0 then
@@ -261,7 +257,13 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                             end if;
                         when 1 => 
                             if ticks_til_update(dac_count) = duration(dac_count) then -- we just read new values
-                                next_voltage(dac_count) <= next_voltage(dac_count) + to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(duration(dac_count), 48), shift_bits(dac_count)));
+                                if new_sequence(dac_count) = '1' then
+                                    new_sequence(dac_count) := '0';
+                                    next_voltage(dac_count) <= 2**15 + to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(duration(dac_count), 48), shift_bits(dac_count)));
+                                else
+                                    next_voltage(dac_count) <= next_voltage(dac_count) 
+                                                               + to_integer(shift_right(to_signed(step_size(dac_count), 48)*to_signed(duration(dac_count), 48), shift_bits(dac_count)));
+                                end if;
                             end if;
                         when 3 =>
                             ticks_til_update(0) <= ticks_til_update(0) - 1;
@@ -278,7 +280,7 @@ state <= idle when ep00wire(1 downto 0) = "00" else
                 when ready => 
                     null;
                 when others => -- other states
-                    new_sequence := '1';
+                    new_sequence := (others => '1');
                     shift_bits <= (others => 0);
 --                    next_voltage <= (others => 2**15);
                     step_size <= (others => 0);
